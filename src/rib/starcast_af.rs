@@ -143,6 +143,63 @@ impl<
             })
     }
 
+    // Physically remove every record carrying `mui` from this address
+    // family's RIB, reclaiming the record slots that marking-as-withdrawn
+    // would otherwise leave behind forever. Emptied prefixes have their
+    // existence bit cleared, and `mui` is dropped from the global withdrawn
+    // index so a future reuse of the id starts clean.
+    //
+    // Returns `(records_removed, prefixes_emptied)`.
+    pub(crate) fn remove_mui(
+        &self,
+        mui: u32,
+        guard: &Guard,
+    ) -> Result<(usize, usize), PrefixStoreError> {
+        // Collect first, mutate second: never mutate the tree while one of its
+        // iterators is live. `include_withdrawn = true` is essential — without
+        // it a globally-withdrawn mui (the common teardown case) yields nothing
+        // and removal would silently no-op.
+        let prefixes: Vec<PrefixId<AF>> = self
+            .more_specifics_iter_from(
+                PrefixId::new(<AF as AddressFamily>::zero(), 0),
+                Some(mui),
+                true,
+                guard,
+            )
+            .filter_map(|res| res.ok().map(|(prefix, _records)| prefix))
+            .collect();
+
+        let mut records_removed = 0;
+        let mut prefixes_emptied = 0;
+
+        for prefix in prefixes {
+            let (removed, now_empty) = self
+                .prefix_cht
+                .remove_mui_for_prefix(prefix, mui)
+                .map_err(|_| PrefixStoreError::FatalError)?;
+            if removed {
+                records_removed += 1;
+                // Keep the family-level counters (the store's `total_count`)
+                // in step with the prefix-CHT counters decremented inside
+                // remove_mui_for_prefix (the `in_memory_count`).
+                self.counters.dec_routes_count();
+            }
+            if now_empty {
+                prefixes_emptied += 1;
+                self.tree_bitmap.set_prefix_absent(prefix)?;
+                self.counters.dec_prefixes_count(prefix.len());
+            }
+        }
+
+        // Every record for this mui is gone, so drop it from the withdrawn
+        // index. This writes the bitmap via the same unbounded CAS as
+        // mark_mui_as_withdrawn, so callers must serialize removals behind
+        // their own lock.
+        self.tree_bitmap.mark_mui_as_active(mui, guard)?;
+
+        Ok((records_removed, prefixes_emptied))
+    }
+
     fn upsert_prefix(
         &self,
         prefix: PrefixId<AF>,

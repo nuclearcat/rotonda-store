@@ -145,7 +145,7 @@ impl Counters {
         }
     }
 
-    pub fn _dec_prefixes_count(&self, len: u8) {
+    pub fn dec_prefixes_count(&self, len: u8) {
         if let Some(p) = self.prefixes.get(len as usize) {
             p.fetch_sub(1, Ordering::Relaxed);
         }
@@ -175,6 +175,10 @@ impl Counters {
 
     pub fn inc_routes_count(&self) {
         self.routes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn dec_routes_count(&self) {
+        self.routes.fetch_sub(1, Ordering::Relaxed);
     }
 }
 

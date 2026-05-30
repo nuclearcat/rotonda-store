@@ -275,6 +275,22 @@ impl<M: Send + Sync + Debug + Display + Meta> MultiMap<M> {
             }
         }
     }
+
+    // Physically drop the record for `mui` from this prefix's record map,
+    // releasing the MultiMapValue (and thereby its reference to the interned
+    // attribute blob). Unlike marking a mui as withdrawn (a status flip), this
+    // reclaims the HashMap slot. Returns `(removed, map_now_empty)`.
+    pub(crate) fn remove_mui(&self, mui: u32) -> FatalResult<(bool, bool)> {
+        let (mut record_map, _retry_count) = self.acquire_write_lock()?;
+        let removed = record_map.remove(&mui).is_some();
+        let now_empty = record_map.is_empty();
+        // HashMap::remove never shrinks capacity; reclaim it once the map has
+        // emptied out well below its allocation.
+        if removed && record_map.capacity() > 4 * record_map.len().max(1) {
+            record_map.shrink_to_fit();
+        }
+        Ok((removed, now_empty))
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) struct MultiMapValue<M> {
@@ -820,12 +836,39 @@ impl<AF: AddressFamily, M: Meta, const ROOT_SIZE: usize>
         }
     }
 
+    // Physically remove the record for `mui` at `prefix`, keeping this CHT's
+    // own counters in sync (these back the `in_memory_count` reported by the
+    // store). Returns `(removed, now_empty)`, where `now_empty` means the
+    // prefix has no records left for any mui. A `false`/`false` result means
+    // the prefix (or its record for this mui) was not present.
+    pub(crate) fn remove_mui_for_prefix(
+        &self,
+        prefix: PrefixId<AF>,
+        mui: u32,
+    ) -> FatalResult<(bool, bool)> {
+        if let (Some(stored_prefix), _) =
+            self.non_recursive_retrieve_prefix(prefix)
+        {
+            let (removed, now_empty) =
+                stored_prefix.record_map.remove_mui(mui)?;
+            if removed {
+                self.counters.dec_routes_count();
+            }
+            if now_empty {
+                self.counters.dec_prefixes_count(prefix.len());
+            }
+            Ok((removed, now_empty))
+        } else {
+            Ok((false, false))
+        }
+    }
+
     pub(crate) fn prefixes_count(&self) -> usize {
         self.counters.prefixes_count().iter().sum()
     }
 
     pub(crate) fn routes_count(&self) -> usize {
-        self.counters.nodes_count()
+        self.counters.routes_count()
     }
 
     fn hash_prefix_id(id: PrefixId<AF>, level: u8) -> usize {

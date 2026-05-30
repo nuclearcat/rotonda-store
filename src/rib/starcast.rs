@@ -783,6 +783,38 @@ impl<'a, M: Meta, C: Config> StarCastRib<M, C> {
         res_v4.and(res_v6)
     }
 
+    /// Physically remove all records for `multi_uniq_id` from the RIB,
+    /// reclaiming their memory.
+    ///
+    /// This differs from [`mark_mui_as_withdrawn`](Self::mark_mui_as_withdrawn),
+    /// which only flips a status bit and keeps the records (and their interned
+    /// attribute references) in place. Marking is the right choice for a peer
+    /// that may reconnect and re-announce, but it leaks memory for ids that are
+    /// gone for good — e.g. synthesized BMP peers that mint a fresh id every
+    /// session and never rebind.
+    ///
+    /// Emptied prefixes have their existence bit cleared and `mui` is dropped
+    /// from the global withdrawn index. The (now empty) `StoredPrefix` nodes
+    /// themselves are left allocated, since the store has no node reclamation;
+    /// the per-prefix record slots — the bulk of the footprint — are freed.
+    ///
+    /// Writing the withdrawn index uses an unbounded CAS that can livelock
+    /// under concurrent writers, so callers must serialize calls to this method
+    /// (and to the `mark_mui_as_*` family) behind their own lock.
+    ///
+    /// Returns `(records_removed, prefixes_emptied)` summed over IPv4 and IPv6.
+    pub fn remove_mui(
+        &self,
+        mui: u32,
+    ) -> Result<(usize, usize), PrefixStoreError> {
+        let guard = &epoch::pin();
+
+        let (records_v4, emptied_v4) = self.v4.remove_mui(mui, guard)?;
+        let (records_v6, emptied_v6) = self.v6.remove_mui(mui, guard)?;
+
+        Ok((records_v4 + records_v6, emptied_v4 + emptied_v6))
+    }
+
     /// Request whether the global status for IPv4 prefixes and the specified
     /// `multi_uniq_id` is set to `Withdrawn`.
     pub fn mui_is_withdrawn_v4(&self, mui: u32) -> bool {

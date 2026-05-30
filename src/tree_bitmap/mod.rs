@@ -233,7 +233,9 @@ use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::{fmt::Debug, marker::PhantomData};
 
 use crate::types::AddressFamily;
-use atomic_bitmap::{AtomicBitmap, AtomicPfxBitArr, AtomicPtrBitArr};
+use atomic_bitmap::{
+    AtomicBitmap, AtomicPfxBitArr, AtomicPtrBitArr, CasResult,
+};
 
 use crate::types::errors::PrefixStoreError;
 
@@ -453,6 +455,57 @@ Giving up this node. This shouldn't happen!",
                 pfxbitarr & bs.into_bit_pos() > 0
             }
             None => false,
+        }
+    }
+
+    // The inverse of `set_prefix_exists`: clears the bit for `prefix_id` in the
+    // leaf node's pfxbitarr, marking the prefix as no longer present. Returns
+    // `Ok(true)` if a set bit was cleared, `Ok(false)` if it was already absent
+    // (or no node exists on its path).
+    //
+    // Only the leaf prefix bit is cleared. The intermediate `ptrbitarr` bits
+    // are deliberately left intact: they are shared with sibling prefixes, and
+    // the nodes they point at can't be freed anyway (the store has no epoch
+    // reclamation), so clearing them would be both unsafe and pointless.
+    //
+    // This does not touch any counters; prefix/route accounting is owned by the
+    // caller (`remove_mui`), since the `TreeBitMap`'s own counters only track
+    // node counts, not prefixes.
+    pub(crate) fn set_prefix_absent(
+        &self,
+        prefix_id: PrefixId<AF>,
+    ) -> Result<bool, PrefixStoreError> {
+        // The default route lives on the root node, tracked by a flag rather
+        // than a pfxbitarr bit (see update_default_route_prefix_meta).
+        if prefix_id.len() == 0 {
+            return Ok(self
+                .default_route_exists
+                .swap(false, Ordering::Release));
+        }
+
+        let (node_id, bs) = self.node_id_for_prefix(&prefix_id);
+        let bit_pos = bs.into_bit_pos();
+
+        match self.retrieve_node(node_id) {
+            Some(node) => {
+                let mut cur = node.pfxbitarr.load();
+                loop {
+                    if cur & bit_pos == 0 {
+                        // Already absent (e.g. a concurrent remover beat us).
+                        return Ok(false);
+                    }
+                    match node
+                        .pfxbitarr
+                        .compare_exchange(cur, cur & !bit_pos)
+                    {
+                        CasResult(Ok(_)) => return Ok(true),
+                        // The Err payload carries the now-current value, so we
+                        // retry against it without a separate reload.
+                        CasResult(Err(newer)) => cur = newer,
+                    }
+                }
+            }
+            None => Ok(false),
         }
     }
 

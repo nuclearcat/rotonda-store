@@ -150,7 +150,7 @@ impl<AF: AddressFamily, K: Key<AF, KEY_SIZE>, const KEY_SIZE: usize>
     pub fn _remove(&self, key: &[u8]) {
         self.tree.remove_weak(key, 0);
         // the first byte of the prefix holds the length of the prefix.
-        self.counters._dec_prefixes_count(key[0]);
+        self.counters.dec_prefixes_count(key[0]);
     }
 
     // Based on the properties of the lsm_tree we can assume that the key and
