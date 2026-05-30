@@ -32,21 +32,25 @@ use crate::{
 // unique identifier ("mui"). Note that the record contains more than just
 // the // meta-data typed value ("M").
 
+/// The per-prefix record map, keyed by `mui` (multi-unique-id). Uses
+/// `FxBuildHasher` instead of the default SipHash: the keys are internal `u32`
+/// mui values (no DoS-resistance needed), and SipHash on a u32 showed up as
+/// ~4-5% of CPU on the upsert path (`hash_one`) under load.
+type RecordMap<M> =
+    HashMap<u32, MultiMapValue<M>, rustc_hash::FxBuildHasher>;
+
 #[derive(Debug)]
-pub struct MultiMap<M: Meta>(
-    Arc<Mutex<std::collections::HashMap<u32, MultiMapValue<M>>>>,
-);
+pub struct MultiMap<M: Meta>(Arc<Mutex<RecordMap<M>>>);
 
 impl<M: Send + Sync + Debug + Display + Meta> MultiMap<M> {
-    pub(crate) fn new(record_map: HashMap<u32, MultiMapValue<M>>) -> Self {
+    pub(crate) fn new(record_map: RecordMap<M>) -> Self {
         Self(Arc::new(Mutex::new(record_map)))
     }
 
     #[allow(clippy::type_complexity)]
     fn acquire_write_lock(
         &self,
-    ) -> FatalResult<(MutexGuard<HashMap<u32, MultiMapValue<M>>>, usize)>
-    {
+    ) -> FatalResult<(MutexGuard<RecordMap<M>>, usize)> {
         let mut retry_count: usize = 0;
         let backoff = Backoff::new();
 
@@ -65,7 +69,7 @@ impl<M: Send + Sync + Debug + Display + Meta> MultiMap<M> {
 
     fn acquire_read_guard(
         &self,
-    ) -> MutexGuard<HashMap<u32, MultiMapValue<M>>> {
+    ) -> MutexGuard<RecordMap<M>> {
         let backoff = Backoff::new();
 
         loop {
@@ -420,7 +424,7 @@ impl<AF: AddressFamily, M: Meta> StoredPrefix<AF, M> {
         };
         // End of calculation
 
-        let rec_map = HashMap::new();
+        let rec_map = RecordMap::default();
 
         StoredPrefix {
             prefix: pfx_id,

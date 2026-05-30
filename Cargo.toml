@@ -23,6 +23,7 @@ rust-version = "1.82"
 crossbeam-epoch = "^0.9"
 crossbeam-utils = "^0.8"
 parking_lot_core = "0.9.10"
+rustc-hash = "2.1" # FxBuildHasher for the u32-keyed per-prefix record map
 
 inetnum   = "0.1"
 log       = "^0.4"
