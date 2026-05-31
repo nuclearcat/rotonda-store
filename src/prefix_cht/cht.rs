@@ -474,6 +474,10 @@ impl<AF: AddressFamily, M: Meta> StoredPrefix<AF, M> {
                 guard,
             )
             .map_err(|_| PrefixStoreError::PathSelectionOutdated)?;
+        // The CAS succeeded, so `current` (the previous PathSelections) is now
+        // unreachable for future readers. Defer its reclamation to the epoch
+        // GC; without this every best/backup-path change leaks the old value.
+        unsafe { guard.defer_destroy(current) };
         Ok(())
     }
 

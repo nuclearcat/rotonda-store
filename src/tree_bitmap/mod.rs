@@ -621,7 +621,14 @@ Giving up this node. This shouldn't happen!",
                 Ordering::Acquire,
                 guard,
             ) {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    // We replaced `current` with a fresh bitmap, so the old
+                    // allocation is now unreachable for any future reader.
+                    // Hand it to the epoch GC: without this the previous
+                    // RoaringBitmap leaks on every mui withdraw/activate.
+                    unsafe { guard.defer_destroy(current) };
+                    return Ok(());
+                }
                 Err(updated) => {
                     new = unsafe { updated.current.as_ref() }
                         .ok_or(PrefixStoreError::StoreNotReadyError)?
