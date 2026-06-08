@@ -514,6 +514,24 @@ impl<
         })
     }
 
+    /// Iterate over just the prefix *keys* in the store, without reading any
+    /// record values.
+    ///
+    /// Unlike [`Self::prefixes_iter`], this takes no epoch [`Guard`]: it only
+    /// walks the (effectively permanent) TreeBitMap node structure and copies
+    /// out [`Prefix`] values, so it pins no epoch garbage and never calls
+    /// `get_value`. Its cost is bounded by the number of prefixes (~table
+    /// size), not by the per-prefix record/path count.
+    ///
+    /// Intended for memory-bounded streaming dumps that enumerate keys cheaply
+    /// up front and then fetch each prefix's records separately (e.g. via
+    /// [`super::StarCastRib::get_records_for_prefix`]) under a short-lived
+    /// guard — so a single guard is never held across a slow, network-paced
+    /// walk.
+    pub fn prefixes_keys_iter(&self) -> impl Iterator<Item = Prefix> + '_ {
+        self.tree_bitmap.prefixes_iter()
+    }
+
     //-------- Persistence ---------------------------------------------------
 
     pub fn persist_strategy(&self) -> PersistStrategy {

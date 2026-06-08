@@ -590,6 +590,38 @@ impl<'a, M: Meta, C: Config> StarCastRib<M, C> {
             .map(|r| r.map(PrefixRecord::from))
     }
 
+    /// Request a guard-free iterator over just the IPv4 prefix *keys*.
+    ///
+    /// See [`StarCastAfRib::prefixes_keys_iter`]: walks only the TreeBitMap
+    /// node structure, reads no record values, and holds no epoch guard.
+    /// Pair with [`Self::get_records_for_prefix`] to stream a large RIB
+    /// without pinning epoch garbage across a slow, network-paced walk.
+    pub fn prefixes_keys_iter_v4(
+        &'a self,
+    ) -> impl Iterator<Item = Prefix> + 'a {
+        self.v4.prefixes_keys_iter()
+    }
+
+    /// Request a guard-free iterator over just the IPv6 prefix *keys*.
+    ///
+    /// See [`Self::prefixes_keys_iter_v4`].
+    pub fn prefixes_keys_iter_v6(
+        &'a self,
+    ) -> impl Iterator<Item = Prefix> + 'a {
+        self.v6.prefixes_keys_iter()
+    }
+
+    /// Request a guard-free iterator over all prefix *keys* (IPv4 then IPv6).
+    ///
+    /// See [`Self::prefixes_keys_iter_v4`].
+    pub fn prefixes_keys_iter(
+        &'a self,
+    ) -> impl Iterator<Item = Prefix> + 'a {
+        self.v4
+            .prefixes_keys_iter()
+            .chain(self.v6.prefixes_keys_iter())
+    }
+
     /// Request an iterator over all persisted prefixes.
     ///
     /// Returns an over [PrefixRecord].
