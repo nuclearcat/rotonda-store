@@ -160,7 +160,6 @@ impl<
         guard: &'a Guard,
     ) -> impl Iterator<Item = FatalResult<(PrefixId<AF>, Vec<Record<M>>)>> + 'a
     {
-        println!("more_specifics_iter_from fn");
         // If the user wanted a specific mui and not withdrawn prefixes, we
         // may return early if the mui is globally withdrawn.
         (if mui.is_some_and(|m| {

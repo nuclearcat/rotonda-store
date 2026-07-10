@@ -159,14 +159,30 @@ impl<
         // iterators is live. `include_withdrawn = true` is essential — without
         // it a globally-withdrawn mui (the common teardown case) yields nothing
         // and removal would silently no-op.
-        let prefixes: Vec<PrefixId<AF>> = self
-            .more_specifics_iter_from(
-                PrefixId::new(<AF as AddressFamily>::zero(), 0),
-                Some(mui),
-                true,
-                guard,
+        //
+        // The more-specifics walk yields strictly-longer prefixes than its
+        // 0/0 start, so a record on the default route itself must be added
+        // explicitly (`remove_mui_for_prefix` no-ops if this mui holds
+        // nothing there).
+        let default_route_id =
+            PrefixId::new(<AF as AddressFamily>::zero(), 0);
+        let default_route = if self.tree_bitmap.prefix_exists(default_route_id)
+        {
+            Some(default_route_id)
+        } else {
+            None
+        };
+        let prefixes: Vec<PrefixId<AF>> = default_route
+            .into_iter()
+            .chain(
+                self.more_specifics_iter_from(
+                    PrefixId::new(<AF as AddressFamily>::zero(), 0),
+                    Some(mui),
+                    true,
+                    guard,
+                )
+                .filter_map(|res| res.ok().map(|(prefix, _records)| prefix)),
             )
-            .filter_map(|res| res.ok().map(|(prefix, _records)| prefix))
             .collect();
 
         let mut records_removed = 0;

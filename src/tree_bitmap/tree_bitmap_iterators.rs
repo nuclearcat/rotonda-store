@@ -224,23 +224,20 @@ impl<AF: AddressFamily, const ROOT_SIZE: usize> Iterator
 
     // This iterator moves down all prefix lengths, starting with the length
     // of the (search prefix - 1), looking for shorter prefixes, where the
-    // its bits are the same as the bits of the search prefix.
+    // its bits are the same as the bits of the search prefix. Length 0 (the
+    // default route) is included: `prefix_exists` resolves it via the
+    // root-node flag.
     fn next(&mut self) -> Option<Self::Item> {
         trace!("search next less-specific for {:?}", self.prefix);
-        self.cur_level = self.cur_level.saturating_sub(1);
-
-        loop {
-            if self.cur_level == 0 {
-                return None;
-            }
+        while self.cur_level > 0 {
+            self.cur_level -= 1;
 
             let lvl_pfx = self.prefix.truncate_to_len(self.cur_level);
             if self.tree.prefix_exists(lvl_pfx) {
                 return Some(lvl_pfx);
             }
-
-            self.cur_level = self.cur_level.saturating_sub(1);
         }
+        None
     }
 }
 
@@ -352,10 +349,21 @@ impl<'a, AF: AddressFamily, const ROOT_SIZE: usize>
 
     // Iterator over all the prefixes in the in_memory store.
     pub fn prefixes_iter(&'a self) -> impl Iterator<Item = Prefix> + 'a {
-        self.more_specific_prefix_iter_from(PrefixId::new(
-            AF::new(0_u32.into()),
-            0,
-        ))
-        .map(Prefix::from)
+        // The more-specifics walk from 0/0 yields strictly longer prefixes,
+        // so the default route — tracked by a root-node flag, not a
+        // pfxbitarr bit — must be chained in explicitly.
+        let default_route_id = PrefixId::new(AF::new(0_u32.into()), 0);
+        let default_route = if self.prefix_exists(default_route_id) {
+            Some(Prefix::from(default_route_id))
+        } else {
+            None
+        };
+        default_route.into_iter().chain(
+            self.more_specific_prefix_iter_from(PrefixId::new(
+                AF::new(0_u32.into()),
+                0,
+            ))
+            .map(Prefix::from),
+        )
     }
 }

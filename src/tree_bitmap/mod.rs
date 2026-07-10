@@ -447,6 +447,12 @@ Giving up this node. This shouldn't happen!",
 
     pub fn prefix_exists(&self, prefix_id: PrefixId<AF>) -> bool {
         trace!("pe exists {:?}?", prefix_id);
+        // The default route lives on the root node, tracked by a flag
+        // rather than a pfxbitarr bit (see update_default_route_prefix_meta).
+        if prefix_id.len() == 0 {
+            return self.default_route_exists.load(Ordering::Acquire);
+        }
+
         let (node_id, bs) = self.node_id_for_prefix(&prefix_id);
 
         match self.retrieve_node(node_id) {
